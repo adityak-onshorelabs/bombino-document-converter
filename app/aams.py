@@ -221,9 +221,14 @@ def _prior_notice(street: str) -> tuple[str, Cell]:
 def _hts(raw: str, hawb: str, label: str, warnings: list[Warning]) -> Cell:
     """Normalise an HTS code to exactly 10 digits.
 
-    NetCHB files 8-digit codes on most lines and leaves 225 of 723 blank; the
-    AAMS format wants 10 digits everywhere. Written as text when it has a
-    leading zero and as a number otherwise, matching the sample exactly.
+    NOT CURRENTLY CALLED. Both HTS columns are written blank, because NetCHB
+    files 8-digit Indian export codes and AAMS wants 10-digit US codes -
+    padding is not that conversion. Kept, with its unit test, because the
+    leading-zero handling below is verified and will be needed the moment
+    Bombino confirms how the two code sets map to each other.
+
+    Written as text when the code has a leading zero and as a number
+    otherwise, matching the reference file exactly.
     """
     digits = re.sub(r"\D", "", raw)
     if not digits:
@@ -288,10 +293,6 @@ def _hawb_values(shipment: Shipment, flight: FlightInfo,
     street, prior_notice = _prior_notice(first.get("ManufacturerStreetAddress", ""))
     address1, address2 = _split_address(street, hawb, warnings)
 
-    # The hawb-level HTS summarises the shipment: use the first line that has one.
-    summary_hts = next(
-        (row.get("HTS", "") for row in shipment.rows if row.get("HTS")), "")
-
     shipper_zip = as_number(first.get("ManufacturerPostalCode", ""))
     if shipper_zip is None:
         shipper_zip = first.get("ManufacturerPostalCode", "") or None
@@ -314,8 +315,9 @@ def _hawb_values(shipment: Shipment, flight: FlightInfo,
         "description": _truncate(first.get("DescOfMerchandise", ""),
                                  M.WIDTH_HAWB_DESCRIPTION, hawb,
                                  "description", warnings),
-        "hts_code": _hts(summary_hts, hawb, "shipment HTS", warnings)
-                    if summary_hts else None,
+        # Blank for the same reason as the item rows: NetCHB's codes are not
+        # the codes AAMS wants, and a shipment can carry several of them.
+        "hts_code": None,
         "fda_prior_notice": prior_notice,
         "packaging": M.PACKAGING_CODE,
         "shipper_name": _truncate(first.get("ManufacturerName", ""),
@@ -442,7 +444,8 @@ def build_rows(manifest: Manifest,
                    "no NetCHB column holds the AAMS declared value - "
                    "InvoiceValue is not it"),
         ManualFill("hawb", "hts_code", hawb_hts_blank, shipments,
-                   "no entry line on the shipment carries an HTS code"),
+                   "NetCHB's 8-digit codes are not the 10-digit codes AAMS "
+                   "wants, so nothing is filled in automatically"),
         ManualFill("commodity", "hts_code", commodity_hts_blank, commodity_count,
                    "NetCHB's 8-digit codes are not the 10-digit codes AAMS "
                    "wants, so nothing is filled in automatically"),

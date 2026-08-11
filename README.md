@@ -68,12 +68,12 @@ live count. **These are the only columns that need manual work.**
 
 **Never derivable** — no source exists, so these always need a human:
 
-| Record | Column | Blank on the sample | Why |
+| Record | Column | Blank | Why |
 |---|---|---|---|
-| `hawb` | `weight` | 187 of 187 | The NetCHB report has no weight column at all — all 133 were checked. |
-| `hawb` | `declared_value` | 187 of 187 | No NetCHB column holds the AAMS declared value. See below. |
-| `hawb` | `hts_code` | 49 of 187 | No entry line on the shipment carries an HTS code. |
-| `commodity` | `hts_code` | 204 of 620 | NetCHB left the HTS blank on these entry lines. |
+| `hawb` | `weight` (R) | every row | The NetCHB report has no weight column at all — all 133 were checked. |
+| `hawb` | `declared_value` (V) | every row | No NetCHB column holds the AAMS declared value. See below. |
+| `hawb` | `hts_code` (Y) | every row | NetCHB's codes are not the codes AAMS wants. See below. |
+| `commodity` | `hts_code` (I) | every row | Same. |
 
 **Optional on the form** — typed in per run, blank if you skip them:
 
@@ -126,12 +126,27 @@ with a number that would be wrong on a customs declaration.
 `commodity.declared_value` is still mapped from `HTSValue`. If that turns out to
 be wrong too, blank it the same way.
 
-### A note on HTS codes
+### Why the HTS columns are blank
 
-AAMS wants exactly 10 digits on every line. NetCHB files 8-digit codes on most
-lines, 10-digit on some, and leaves 225 of 723 blank. Short codes are
-right-padded with zeros and flagged as warnings; blank ones stay blank and show
-up in the manual-fill table above.
+AAMS wants exactly 10 digits. NetCHB files 8 digits on most lines, 10 on some,
+and nothing at all on 225 of 723. An earlier build right-padded the short ones
+with zeros; that has been removed.
+
+NetCHB appears to carry Indian ITC-HS export codes while AAMS wants US HTSUS
+codes, and appending zeros does not convert between the two. Measured against
+the reference AAMS file, padded codes matched on **3%** of lines exactly, 4% at
+8 digits, and 16% even at the 6-digit HS base — so the goods are being
+reclassified outright, not merely given a statistical suffix.
+
+Both HTS columns are therefore written blank pending a rule from Bombino.
+
+`_hts()` in `app/aams.py` is deliberately kept although nothing calls it. It
+holds one piece of verified handling worth not losing: Excel stores the NetCHB
+HTS column as a *number*, so a leading zero disappears on the way in —
+`09024020` arrives as `9024020`. Codes only come in 4, 6, 8 or 10 digits, so an
+odd 7 or 9 means exactly that, and the zero is put back. Without it, tea files
+under chapter 90 (optical instruments) and dal under chapter 71 (jewellery).
+Its unit test still runs, so the logic stays honest until it is reconnected.
 
 ## Where the conversion loses fidelity
 
@@ -149,8 +164,9 @@ anything that matters.
 wants two 25-character lines. In the sample these were separate fields in the
 carrier's own system all along, so no exact re-split rule is recoverable —
 neither word wrapping nor hard slicing reproduces the sample better than chance.
-The converter wraps on word boundaries when the address fits in two lines, and
-hard-slices at 25+25 when it does not, since slicing wastes no characters.
+Until Bombino confirms the rule, the converter splits on **word boundaries
+only**, so both lines stay readable, and drops whatever does not fit in two
+lines rather than cutting mid-word. The drop is reported per shipment.
 
 **Route.** Leaving `man_origin` / `man_dest` blank also blanks `origin` and
 `final_destination` on every `hawb` record, since those mirror the mawb values.
@@ -177,6 +193,7 @@ only on the derivable fields for that reason.
 | `app/templates/index.html` | the single page |
 | `tests/test_conversion.py` | structural + differential tests |
 
-Cell types follow the sample: `hawb`, `shipper_zip`, `num_pieces` and values are
-numeric; `consignee_postal_code` is text so leading zeros survive; `hts_code` is
-text when it starts with a zero and numeric otherwise.
+Cell types follow the sample: `hawb`, `shipper_zip` and `num_pieces` are
+numeric; `consignee_postal_code` is text so leading zeros survive. The same
+rule applies to `hts_code` — text when it starts with a zero, numeric
+otherwise — for when that column is switched back on.
