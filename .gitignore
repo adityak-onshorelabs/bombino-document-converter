@@ -1,0 +1,13 @@
+# Real manifest data. These files carry consignee names and home addresses for
+# ~187 people, so they are kept out of the repository. Put the samples back in
+# sample_docs/ locally to run the test suite.
+*.xls
+*.xlsx
+sample_docs/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env

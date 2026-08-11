@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bombino Document Converter</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --ink: #1c2430;
+    --muted: #6b7684;
+    --line: #dbe0e6;
+    --accent: #12558a;
+    --accent-soft: #e8f1f8;
+    --warn: #8a5a12;
+    --warn-soft: #fdf3e2;
+    --bad: #96271f;
+    --bad-soft: #fdeceb;
+    --ok: #1d6b45;
+    --ok-soft: #e9f5ee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.75rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1.5rem; margin-bottom: 1.25rem;
+  }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 10px;
+    padding: 2rem 1rem; text-align: center; cursor: pointer;
+    background: #fbfcfd; transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { display: block; font-size: 1.05rem; margin-bottom: .25rem; }
+  .drop span { color: var(--muted); font-size: .9rem; }
+  #chosen { margin-top: .9rem; font-weight: 600; color: var(--accent); }
+  input[type=file] { display: none; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem; margin-top: 1.5rem;
+  }
+  label { display: block; font-size: .8rem; font-weight: 600;
+          text-transform: uppercase; letter-spacing: .04em;
+          color: var(--muted); margin-bottom: .35rem; }
+  input[type=text] {
+    width: 100%; padding: .55rem .7rem; font: inherit;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .hint { color: var(--muted); font-size: .8rem; margin-top: .3rem; }
+  .optional-head {
+    margin: 1.75rem 0 .6rem; font-size: .8rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--ink);
+    padding-bottom: .5rem; border-bottom: 1px solid var(--line);
+  }
+  .optional-head span { color: var(--muted); font-weight: 400;
+                        text-transform: none; letter-spacing: 0; }
+  button {
+    margin-top: 1.5rem; padding: .7rem 1.4rem; font: inherit; font-weight: 600;
+    background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+    cursor: pointer;
+  }
+  button:hover { background: #0e4470; }
+  .msg { padding: .9rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; }
+  .msg.error { background: var(--bad-soft); border: 1px solid #f0c4c0; color: var(--bad); }
+  .msg.ok { background: var(--ok-soft); border: 1px solid #bfe2ce; color: var(--ok); }
+  .stats { display: flex; flex-wrap: wrap; gap: 1.75rem; margin: 1rem 0 1.5rem; }
+  .stat b { display: block; font-size: 1.4rem; }
+  .stat span { color: var(--muted); font-size: .8rem;
+               text-transform: uppercase; letter-spacing: .04em; }
+  a.download {
+    display: inline-block; padding: .7rem 1.4rem; font-weight: 600;
+    background: var(--ok); color: #fff; border-radius: 6px; text-decoration: none;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  td.detail { color: var(--muted); }
+  details { margin-top: 1rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  .note { background: var(--warn-soft); border: 1px solid #f0dcb4; color: var(--warn);
+          padding: .9rem 1rem; border-radius: 8px; font-size: .9rem; }
+
+  /* Quiet one-liner on the results panel; the detail lives in the modal. */
+  .subtle-note { margin: 1.25rem 0 0; color: var(--muted); font-size: .9rem; }
+  .subtle-note::before {
+    content: ""; display: inline-block; width: .45rem; height: .45rem;
+    border-radius: 50%; background: var(--warn); margin-right: .5rem;
+    vertical-align: middle;
+  }
+  .linklike {
+    background: none; border: 0; margin: 0; padding: 0; font: inherit;
+    color: var(--accent); text-decoration: underline; cursor: pointer;
+  }
+  .linklike:hover { color: #0e4470; }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(20, 28, 38, .45);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 3rem 1rem; overflow-y: auto; z-index: 50;
+  }
+  .modal-backdrop[hidden] { display: none; }
+  .modal {
+    position: relative; width: 100%; max-width: 620px;
+    background: var(--panel); border-radius: 12px; padding: 1.75rem;
+    box-shadow: 0 18px 50px rgba(20, 28, 38, .28);
+  }
+  .modal h2 { font-size: 1.15rem; margin: 0 0 .4rem; }
+  .modal-close {
+    position: absolute; top: .6rem; right: .75rem;
+    background: none; border: 0; padding: .25rem .5rem;
+    font-size: 1.5rem; line-height: 1; color: var(--muted); cursor: pointer;
+  }
+  .modal-close:hover { color: var(--ink); }
+  .modal-actions {
+    display: flex; flex-wrap: wrap; gap: .75rem; align-items: center;
+    margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
+  }
+  .btn-ghost {
+    padding: .7rem 1.2rem; font: inherit; font-weight: 600; cursor: pointer;
+    background: none; border: 0; color: var(--muted); border-radius: 6px;
+  }
+  .btn-ghost:hover { color: var(--ink); background: var(--bg); }
+
+  .todo-intro { margin: 0 0 1.1rem; color: var(--muted); font-size: .9rem; }
+  ol.todo { margin: 0; padding: 0; list-style: none; counter-reset: todo; }
+  ol.todo li {
+    counter-increment: todo; position: relative;
+    padding: .6rem 0 .6rem 2.4rem;
+    border-bottom: 1px solid var(--line);
+  }
+  ol.todo li:last-child { border-bottom: 0; }
+  ol.todo li::before {
+    content: counter(todo); position: absolute; left: 0; top: .65rem;
+    width: 1.4rem; height: 1.4rem; border-radius: 50%;
+    background: var(--bg); color: var(--muted); border: 1px solid var(--line);
+    font-size: .75rem; font-weight: 600; text-align: center; line-height: 1.3rem;
+  }
+  ol.todo .col {
+    display: inline-block; background: var(--accent-soft); color: var(--accent);
+    font-size: .72rem; font-weight: 700; letter-spacing: .03em;
+    padding: .1rem .45rem; border-radius: 4px; margin-right: .45rem;
+  }
+  ol.todo strong { text-transform: capitalize; }
+  ol.todo .where { color: var(--muted); font-size: .85rem; }
+  ol.todo .detail { color: var(--muted); font-size: .8rem; margin-top: .15rem; }
+
+  a.download.secondary { background: var(--panel); color: var(--accent);
+                         border: 1px solid var(--accent); }
+  a.download.secondary:hover { background: var(--accent-soft); }
+
+  details.changes { margin-top: 1.75rem; padding-top: 1.25rem;
+                    border-top: 1px solid var(--line); }
+  details.changes summary { font-size: .9rem; color: var(--muted); font-weight: 500; }
+  ul.changes-list { margin: .9rem 0 0; padding-left: 1.1rem; font-size: .9rem; }
+  ul.changes-list li { margin-bottom: .4rem; }
+  ul.changes-list li.warn { color: var(--warn); }
+  code { background: #eef1f4; padding: .1rem .3rem; border-radius: 3px; font-size: .85em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bombino Document Converter</h1>
+  <p class="sub">NetCHB manifest report &rarr; AAMS / ECCF transmission file</p>
+
+  {% if error %}<div class="msg error">{{ error }}</div>{% endif %}
+
+  {% if download_data %}
+  <div class="panel">
+    <div class="msg ok">Converted. {{ stats.shipments }} shipments written.</div>
+    <div class="stats">
+      <div class="stat"><b>{{ stats.shipments }}</b><span>Shipments</span></div>
+      <div class="stat"><b>{{ stats.commodities }}</b><span>Commodity lines</span></div>
+      <div class="stat"><b>{{ stats.rows }}</b><span>Rows out</span></div>
+      <div class="stat"><b>{{ stats.mawb }}</b><span>MAWB</span></div>
+      <div class="stat"><b>{{ stats.man_date }}</b><span>Manifest date</span></div>
+    </div>
+    <a class="download" id="dl" download="{{ download_name }}">Download {{ download_name }}</a>
+
+    {% if manual_fill %}
+    <p class="subtle-note">
+      {{ manual_fill|length }} column{{ '' if manual_fill|length == 1 else 's' }}
+      still need filling in before you send this file.
+      <button type="button" class="linklike" id="openTodo">See the list</button>
+    </p>
+    {% endif %}
+
+    {% if adjustments %}
+    <details class="changes">
+      <summary>What the converter changed automatically</summary>
+      <ul class="changes-list">
+        {% for a in adjustments %}
+        <li{% if a.needs_check %} class="warn"{% endif %}>
+          {% if a.needs_check %}<strong>Please check:</strong> {% endif %}
+          {{ a.text }}
+          <span class="detail">
+            &mdash; {{ a.values }} time{{ '' if a.values == 1 else 's' }},
+            across {{ a.shipments }} shipment{{ '' if a.shipments == 1 else 's' }}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="hint">Full details are in the to-do list above.</p>
+    </details>
+    {% endif %}
+  </div>
+  {% if manual_fill %}
+  <div class="modal-backdrop" id="todoModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="todoTitle">
+      <button type="button" class="modal-close" id="closeTodo" aria-label="Close">&times;</button>
+      <h2 id="todoTitle">Before you send this file</h2>
+      <p class="todo-intro">
+        Open the converted file in Excel and fill in these columns. The NetCHB
+        report does not contain them, so they were left empty on purpose.
+      </p>
+
+      <ol class="todo">
+        {% for m in manual_fill %}
+        <li>
+          <span class="col">Column {{ m.column }}</span>
+          <strong>{{ m.label }}</strong>
+          <span class="where">on {{ m.where }}</span>
+          <div class="detail">
+            {{ m.blank }} of {{ m.total }} {{ 'row is' if m.total == 1 else 'rows are' }} empty
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+
+      <div class="modal-actions">
+        <a class="download secondary" id="cl" download="{{ checklist_name }}">
+          Download as Excel to-do list
+        </a>
+        <button type="button" class="btn-ghost" id="okTodo">Got it</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <script>
+    (function () {
+      var modal = document.getElementById("todoModal");
+      if (modal) {
+        var open = function () { modal.hidden = false; document.body.style.overflow = "hidden"; };
+        var shut = function () { modal.hidden = true; document.body.style.overflow = ""; };
+        document.getElementById("openTodo").addEventListener("click", open);
+        document.getElementById("closeTodo").addEventListener("click", shut);
+        document.getElementById("okTodo").addEventListener("click", shut);
+        modal.addEventListener("click", function (e) { if (e.target === modal) shut(); });
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && !modal.hidden) shut();
+        });
+        open();
+      }
+
+      function attach(id, b64) {
+        var el = document.getElementById(id);
+        if (!el) { return; }
+        var bytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
+        var blob = new Blob([bytes], { type: "application/vnd.ms-excel" });
+        el.href = URL.createObjectURL(blob);
+      }
+      attach("dl", "{{ download_data }}");
+      attach("cl", "{{ checklist_data }}");
+    })();
+  </script>
+  {% endif %}
+
+  <form class="panel" action="/convert" method="post" enctype="multipart/form-data">
+    <div class="drop" id="drop">
+      <strong>Drop the NetCHB manifest report here</strong>
+      <span>or click to choose a file &mdash; legacy <code>.xls</code> only</span>
+      <div id="chosen"></div>
+    </div>
+    <input type="file" id="file" name="manifest_file" accept=".xls" required>
+
+    <p class="optional-head">
+      Flight details <span>&mdash; all optional</span>
+    </p>
+    <p class="hint" style="margin-top:-.35rem">
+      None of these are in the NetCHB export. Fill in what you know; anything
+      left blank stays blank in the output and is listed for you afterwards.
+    </p>
+
+    <div class="grid" style="margin-top:1rem">
+      <div>
+        <label for="man_code">Manifest code</label>
+        <input type="text" id="man_code" name="man_code" placeholder="e.g. TY523">
+      </div>
+      <div>
+        <label for="flight_info">Flight</label>
+        <input type="text" id="flight_info" name="flight_info" placeholder="e.g. BA 0117">
+      </div>
+      <div>
+        <label for="man_origin">Origin</label>
+        <input type="text" id="man_origin" name="man_origin" placeholder="e.g. BOM" maxlength="3">
+      </div>
+      <div>
+        <label for="man_dest">Destination</label>
+        <input type="text" id="man_dest" name="man_dest" placeholder="e.g. JFK" maxlength="3">
+      </div>
+    </div>
+
+    <button type="submit">Convert</button>
+  </form>
+</main>
+
+<script>
+  var drop = document.getElementById("drop");
+  var file = document.getElementById("file");
+  var chosen = document.getElementById("chosen");
+
+  function show() { chosen.textContent = file.files.length ? file.files[0].name : ""; }
+
+  drop.addEventListener("click", function () { file.click(); });
+  file.addEventListener("change", show);
+
+  ["dragenter", "dragover"].forEach(function (evt) {
+    drop.addEventListener(evt, function (e) {
+      e.preventDefault(); drop.classList.add("over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (evt) {
+    drop.addEventListener(evt, function (e) {
+      e.preventDefault(); drop.classList.remove("over");
+    });
+  });
+  drop.addEventListener("drop", function (e) {
+    if (e.dataTransfer.files.length) { file.files = e.dataTransfer.files; show(); }
+  });
+</script>
+</body>
+</html>
