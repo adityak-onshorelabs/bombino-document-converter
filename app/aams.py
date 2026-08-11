@@ -418,7 +418,13 @@ def build_rows(manifest: Manifest,
 
     shipments = len(manifest.shipments)
     not_entered = "not in the NetCHB export and not entered on the form"
+    no_group = sum(1 for s in manifest.shipments if not s.group)
     manual_fill = [
+        ManualFill("mawb", "man_date", 0 if manifest.man_date else 1, 1,
+                   f"the Date of Export ({manifest.export_date_raw!r}) could "
+                   "not be read as a day-month-year date"
+                   if manifest.export_date_raw
+                   else "the NetCHB report has no Date of Export"),
         ManualFill("mawb", "man_code", 0 if flight.man_code else 1, 1,
                    not_entered),
         ManualFill("mawb", "flight_info", 0 if flight.flight_info else 1, 1,
@@ -442,6 +448,8 @@ def build_rows(manifest: Manifest,
                    "no entry line on the shipment carries an HTS code"),
         ManualFill("commodity", "hts_code", commodity_hts_blank, commodity_count,
                    "NetCHB left the HTS blank on these entry lines"),
+        ManualFill("hawb", "service_type", no_group, shipments,
+                   "NetCHB left GroupIdentifier blank, so DDP/DDU is unknown"),
     ]
 
     return Conversion(rows=rows, warnings=warnings,

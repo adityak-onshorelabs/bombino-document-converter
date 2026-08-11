@@ -101,6 +101,104 @@ def test_reader_rejects_junk():
         read_manifest(b"not a workbook")
 
 
+def _rebuild(mutate, style_date=None, limit=40):
+    """Rewrite the sample NetCHB report, applying mutate(row_dict, row_index).
+
+    Used to feed the reader the kinds of file a user could plausibly upload:
+    a different flight, a differently formatted date, two manifests at once.
+    """
+    import io
+
+    import xlwt
+
+    src = xlrd.open_workbook(NETCHB).sheet_by_index(0)
+    headers = [src.cell_value(0, c) for c in range(src.ncols)]
+    index = {str(h).strip(): i for i, h in enumerate(headers) if str(h).strip()}
+
+    book = xlwt.Workbook()
+    sheet = book.add_sheet("Worksheet")
+    for c, h in enumerate(headers):
+        sheet.write(0, c, h)
+
+    out = 1
+    for r in range(1, min(limit, src.nrows)):
+        row = {h: src.cell_value(r, i) for h, i in index.items()}
+        row = mutate(row, r)
+        if row is None:
+            continue
+        for h, i in index.items():
+            value = row[h]
+            if value == "" or value is None:
+                continue
+            if style_date and h == "Date of Export":
+                sheet.write(out, i, value, style_date)
+            else:
+                sheet.write(out, i, value)
+        out += 1
+
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()
+
+
+def test_reader_refuses_a_file_covering_two_flights():
+    """Two master bills in one export must not be merged under the first.
+
+    Filing a second flight's shipments under the wrong MAWB would be far worse
+    than refusing the upload.
+    """
+    def two_flights(row, r):
+        if r > 20:
+            row["Master Bill Number"] = 99999999.0
+            row["House AWB"] = str(int(row["House AWB"])) + "X"
+        return row
+
+    with pytest.raises(NetchbError, match="master bills"):
+        read_manifest(_rebuild(two_flights))
+
+
+def test_reader_refuses_mixed_airline_codes():
+    def two_airlines(row, r):
+        if r > 20:
+            row["Airline 3 digit code"] = 176.0
+        return row
+
+    with pytest.raises(NetchbError, match="airline codes"):
+        read_manifest(_rebuild(two_airlines))
+
+
+def test_reader_accepts_a_different_flight():
+    """Nothing may be hardcoded to the one sample flight."""
+    def other_flight(row, r):
+        row["Airline 3 digit code"] = 176.0
+        row["Master Bill Number"] = 12345678.0
+        return row
+
+    manifest = read_manifest(_rebuild(other_flight))
+    assert manifest.mawb == "176-12345678"
+
+
+def test_reader_handles_a_real_excel_date_cell():
+    """An export saved through Excel can carry a date cell, not text."""
+    import datetime
+
+    import xlwt
+
+    style = xlwt.easyxf(num_format_str="DD-MM-YYYY")
+    manifest = read_manifest(_rebuild(
+        lambda row, r: {**row, "Date of Export": datetime.datetime(2026, 7, 29)},
+        style_date=style))
+    assert manifest.man_date == 20260729.0
+
+
+def test_reader_refuses_to_guess_at_a_month_first_date():
+    """'07-29-2026' must not be read as day 7 of month 29."""
+    manifest = read_manifest(_rebuild(
+        lambda row, r: {**row, "Date of Export": "07-29-2026"}))
+    assert manifest.man_date is None
+    assert any(m.field == "man_date" for m in build_rows(manifest).manual_fill)
+
+
 def test_reader_rejects_wrong_workbook():
     """A valid .xls that is not a NetCHB report is refused by name, not crash."""
     with pytest.raises(NetchbError, match="missing column"):

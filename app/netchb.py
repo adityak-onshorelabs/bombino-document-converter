@@ -6,6 +6,7 @@ recovered by grouping consecutive rows on ``House AWB``.
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 
 import xlrd
@@ -76,6 +77,43 @@ class Shipment:
         return len(self.rows) > 1
 
 
+def parse_export_date(value, ctype, datemode) -> datetime.date | None:
+    """Read 'Date of Export' from whatever shape the export happens to use.
+
+    NetCHB writes it as the text 'DD-MM-YYYY', but an export saved through
+    Excel can carry a real date cell instead. Anything that does not parse
+    cleanly as day-month-year returns None rather than a guess: reading
+    '07-29-2026' as day 7 month 29 would silently produce a nonsense manifest
+    date, which is worse than an empty one.
+    """
+    if ctype == xlrd.XL_CELL_DATE:
+        try:
+            year, month, day = xlrd.xldate_as_tuple(value, datemode)[:3]
+            return datetime.date(year, month, day)
+        except (ValueError, xlrd.XLDateError):
+            return None
+
+    text = norm(value)
+    if not text:
+        return None
+    for separator in ("-", "/", "."):
+        parts = text.split(separator)
+        if len(parts) != 3:
+            continue
+        try:
+            day, month, year = (int(p) for p in parts)
+        except ValueError:
+            return None
+        if year < 100:
+            year += 2000
+        try:
+            return datetime.date(year, month, day)
+        except ValueError:
+            # Day and month out of range - most likely a month-first export.
+            return None
+    return None
+
+
 @dataclass
 class Manifest:
     """A parsed NetCHB report."""
@@ -83,7 +121,8 @@ class Manifest:
     shipments: list[Shipment]
     master_bill: str
     airline_code: str
-    export_date: str  # DD-MM-YYYY as it appears in the report
+    export_date: datetime.date | None
+    export_date_raw: str = ""
 
     @property
     def mawb(self) -> str:
@@ -94,14 +133,9 @@ class Manifest:
     @property
     def man_date(self) -> float | None:
         """Export date as the YYYYMMDD number the AAMS mawb record uses."""
-        parts = self.export_date.split("-")
-        if len(parts) != 3:
+        if self.export_date is None:
             return None
-        day, month, year = parts
-        try:
-            return float(f"{int(year):04d}{int(month):02d}{int(day):02d}")
-        except ValueError:
-            return None
+        return float(self.export_date.strftime("%Y%m%d"))
 
 
 def read_manifest(contents: bytes) -> Manifest:
@@ -131,7 +165,10 @@ def read_manifest(contents: bytes) -> Manifest:
 
     shipments: list[Shipment] = []
     by_hawb: dict[str, Shipment] = {}
-    master_bill = airline_code = export_date = ""
+    master_bills: set[str] = set()
+    airline_codes: set[str] = set()
+    export_date = None
+    export_date_raw = ""
 
     for r in range(1, sheet.nrows):
         row = {name: norm(sheet.cell_value(r, c)) for name, c in index.items()}
@@ -141,21 +178,46 @@ def read_manifest(contents: bytes) -> Manifest:
 
         shipment = by_hawb.get(hawb)
         if shipment is None:
-            shipment = Shipment(hawb=hawb, group=row["GroupIdentifier"] or "DDP")
+            shipment = Shipment(hawb=hawb, group=row["GroupIdentifier"])
             by_hawb[hawb] = shipment
             shipments.append(shipment)
         shipment.rows.append(row)
 
-        master_bill = master_bill or row.get("Master Bill Number", "")
-        airline_code = airline_code or row.get("Airline 3 digit code", "")
-        export_date = export_date or row.get("Date of Export", "")
+        if row.get("Master Bill Number"):
+            master_bills.add(row["Master Bill Number"])
+        if row.get("Airline 3 digit code"):
+            airline_codes.add(row["Airline 3 digit code"])
+
+        if export_date is None and "Date of Export" in index:
+            c = index["Date of Export"]
+            export_date_raw = export_date_raw or norm(sheet.cell_value(r, c))
+            export_date = parse_export_date(
+                sheet.cell_value(r, c), sheet.cell_type(r, c), book.datemode)
 
     if not shipments:
         raise NetchbError("No rows with a House AWB were found.")
 
+    # An AAMS file describes one master air waybill. Silently filing a second
+    # flight's shipments under the first one's MAWB would be far worse than
+    # refusing the file.
+    if len(master_bills) > 1:
+        listed = ", ".join(sorted(master_bills))
+        raise NetchbError(
+            f"This report covers {len(master_bills)} master bills ({listed}). "
+            "An AAMS file describes a single flight, so please export one "
+            "master bill at a time."
+        )
+    if len(airline_codes) > 1:
+        listed = ", ".join(sorted(airline_codes))
+        raise NetchbError(
+            f"This report mixes airline codes ({listed}). Please export one "
+            "flight at a time."
+        )
+
     return Manifest(
         shipments=shipments,
-        master_bill=master_bill,
-        airline_code=airline_code,
+        master_bill=next(iter(master_bills), ""),
+        airline_code=next(iter(airline_codes), ""),
         export_date=export_date,
+        export_date_raw=export_date_raw,
     )
