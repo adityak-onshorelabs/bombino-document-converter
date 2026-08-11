@@ -175,10 +175,9 @@ def _split_address(street: str, hawb: str,
     fields all along, so no exact re-split rule is recoverable - neither word
     wrapping nor hard slicing reproduces the sample better than chance.
 
-    So: wrap on word boundaries when the whole address fits in two lines, and
-    fall back to a hard 25+25 slice when it does not, because slicing wastes
-    no characters at the line break. Anything past 50 characters cannot be
-    represented and is reported.
+    Until Bombino confirms the real rule, split on word boundaries only, so
+    every line the file carries is at least readable. Whatever does not fit in
+    two lines is dropped and reported rather than cut mid-word.
     """
     words = street.split()
     lines: list[str] = []
@@ -197,18 +196,13 @@ def _split_address(street: str, hawb: str,
     if current:
         lines.append(current)
 
-    if len(lines) <= 2:
-        return (lines[0] if lines else "",
-                lines[1] if len(lines) > 1 else "")
-
-    capacity = M.WIDTH_ADDRESS_LINE * 2
-    if len(street) > capacity:
+    if len(lines) > 2:
         warnings.append(Warning(
             hawb, "shipper address overflow",
-            f"dropped {street[capacity:]!r} - the AAMS format has only two "
+            f"dropped {' '.join(lines[2:])!r} - the AAMS format has only two "
             f"{M.WIDTH_ADDRESS_LINE}-character address lines"))
-    return (street[: M.WIDTH_ADDRESS_LINE].strip(),
-            street[M.WIDTH_ADDRESS_LINE:capacity].strip())
+    return (lines[0] if lines else "",
+            lines[1] if len(lines) > 1 else "")
 
 
 def _prior_notice(street: str) -> tuple[str, Cell]:
@@ -357,7 +351,10 @@ def _commodity_values(row: dict, hawb: str, warnings: list[Warning]) -> dict:
         "quantity": as_number(row.get("HTSQty", "")),
         "description": _truncate(description, M.WIDTH_COMMODITY_DESCRIPTION,
                                  hawb, "commodity description", warnings),
-        "hts_code": _hts(row.get("HTS", ""), hawb, "line HTS", warnings),
+        # Deliberately blank. NetCHB files 8-digit Indian export codes and AAMS
+        # wants 10-digit US codes; padding with zeros is not that conversion.
+        # Left for manual classification until Bombino confirms a rule.
+        "hts_code": None,
         "origin_country": row.get("Country Of Origin", "") or None,
         "declared_value": as_number(row.get("HTSValue", "")),
         "declared_value_currency": M.CURRENCY,
@@ -447,7 +444,8 @@ def build_rows(manifest: Manifest,
         ManualFill("hawb", "hts_code", hawb_hts_blank, shipments,
                    "no entry line on the shipment carries an HTS code"),
         ManualFill("commodity", "hts_code", commodity_hts_blank, commodity_count,
-                   "NetCHB left the HTS blank on these entry lines"),
+                   "NetCHB's 8-digit codes are not the 10-digit codes AAMS "
+                   "wants, so nothing is filled in automatically"),
         ManualFill("hawb", "service_type", no_group, shipments,
                    "NetCHB left GroupIdentifier blank, so DDP/DDU is unknown"),
     ]

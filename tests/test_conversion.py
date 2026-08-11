@@ -410,36 +410,45 @@ def test_manual_fill_drops_fields_the_operator_supplied(manifest):
     assert ("commodity", "hts_code") in reported
 
 
-def test_hts_leading_zero_is_restored(output_sheet):
-    """Excel drops the leading zero on chapter 01-09 codes; put it back.
+def test_item_row_hts_is_always_blank(output_sheet, conversion):
+    """Column I is left empty pending Bombino's answer on code conversion.
 
-    'TEA' is filed as 09024020 but reaches us as the number 9024020. Padding
-    that on the right would land it in chapter 90, optical instruments.
+    NetCHB files 8-digit Indian export codes; AAMS wants 10-digit US codes.
+    Padding with zeros is not that conversion, so nothing is written.
     """
     col = M.PAYLOAD_START_COL + list(M.COMMODITY_FIELDS).index("hts_code")
-    desc = M.PAYLOAD_START_COL + list(M.COMMODITY_FIELDS).index("description")
-    found = {}
+    rows = 0
     for r in range(output_sheet.nrows):
         if output_sheet.cell_value(r, M.PAYLOAD_START_COL) != "commodity":
             continue
-        cell = output_sheet.cell(r, col)
-        if cell.ctype == xlrd.XL_CELL_EMPTY:
-            continue
-        code = (cell.value if cell.ctype == xlrd.XL_CELL_TEXT
-                else str(int(cell.value)))
-        found.setdefault(output_sheet.cell_value(r, desc), code)
+        rows += 1
+        assert output_sheet.cell_type(r, col) == xlrd.XL_CELL_EMPTY
 
-    assert found["TEA"] == "0902402000", found["TEA"]
-    assert found["DAL"] == "0713202000", found["DAL"]
-    assert found["BRANED SPICES"] == "0910992000", found["BRANED SPICES"]
-    # Genuine 4- and 6-digit codes must NOT be shifted.
-    assert found["HAIR BRUSH"] == "9615190000"
-    assert "0442000000" not in found.values(), "4420 was wrongly shifted"
+    reported = {(m.record, m.field): m for m in conversion.manual_fill}
+    assert reported[("commodity", "hts_code")].blank == rows
 
 
-def test_blank_hts_lines_are_reported(conversion):
-    issues = {w.issue for w in conversion.warnings}
-    assert "line HTS missing" in issues
+def test_hts_leading_zero_is_restored():
+    """Excel drops the leading zero on chapter 01-09 codes; put it back.
+
+    'TEA' is filed as 09024020 but reaches us as the number 9024020. Padding
+    that on the right would land it in chapter 90, optical instruments. Still
+    exercised because the shipment row (column Y) uses the same routine.
+    """
+    from app.aams import _hts
+
+    def code(raw):
+        cell = _hts(raw, "TEST", "shipment HTS", [])
+        return cell if isinstance(cell, str) else str(int(cell))
+
+    assert code("9024020") == "0902402000"    # tea
+    assert code("7132020") == "0713202000"    # dal
+    assert code("9109920") == "0910992000"    # spices
+    # Genuine 4-, 6- and 8-digit codes must NOT be shifted.
+    assert code("961519") == "9615190000"
+    assert code("4420") == "4420000000"
+    assert code("62114210") == "6211421000"
+    assert _hts("", "TEST", "shipment HTS", []) is None
 
 
 # --- differential against the real sample pair ------------------------------
